@@ -20,11 +20,11 @@ categories <- c("mood", "mins", "reason", "content", "activity")
 ui <- fluidPage(
   theme = bs_theme(bootswatch = "flatly", base_font = font_google("Lato")),
   
-  titlePanel(div(style = "color:#2c3e50; font-size: 28px; font-weight: bold;", "📱 EMA Explorer")),
+  titlePanel(div(style = "color:#2c3e50; font-size: 28px; font-weight: bold;", "EMA Explorer  /ᐠ – ˕ –マ  👍")),
   
   sidebarLayout(
     sidebarPanel(
-      h4("📊 Controls"),
+      h4("Control Center"),
       checkboxGroupInput("selected_platforms", "Platforms:", choices = platforms, selected = platforms[1]),
       checkboxGroupInput("selected_categories", "Categories:", choices = categories, selected = categories),
       
@@ -35,7 +35,7 @@ ui <- fluidPage(
                   "Plot Type:",
                   choices = c("Scatterplot", "Histogram", "Boxplot", "Facet Scatterplot", "Facet Histogram")),
       hr(),
-      actionButton("run_regression", "Run Regression 💡", class = "btn btn-primary"),
+      actionButton("run_regression", "Run Regression", class = "btn btn-primary"),
       hr(),
       
       h4("📄 Export Options"),
@@ -46,20 +46,20 @@ ui <- fluidPage(
     
     mainPanel(
       tabsetPanel(type = "tabs", id = "tabs",
-                  tabPanel("🔍 Preview", DT::dataTableOutput("preview_selected")),
-                  tabPanel("📊 Plots", withSpinner(plotOutput("scatter_plot", height = "500px"))),
-                  tabPanel("📋 Regression", verbatimTextOutput("regression_output")),
+                  tabPanel("CSV Preview", DT::dataTableOutput("preview_selected")),
+                  tabPanel("Plots", withSpinner(plotOutput("scatter_plot", height = "500px"))),
+                  tabPanel("Regression", verbatimTextOutput("regression_output")),
                   tabPanel(
-                    "🧪 Summary Tables",
+                    "Summary Tables",
                     fluidRow(
                       column(4, style = "padding-right: 20px;",
-                             h4("📍 Reasons", style = "margin-bottom: 15px;"),
+                             h4("Reasons", style = "margin-bottom: 15px;"),
                              DT::dataTableOutput("reason_table") %>% withSpinner()),
                       column(4, style = "padding-left: 10px; padding-right: 10px;",
-                             h4("📆 Content", style = "margin-bottom: 15px;"),
+                             h4("Content", style = "margin-bottom: 15px;"),
                              DT::dataTableOutput("content_table") %>% withSpinner()),
                       column(4, style = "padding-left: 20px;",
-                             h4("🏃 Activities", style = "margin-bottom: 15px;"),
+                             h4("Activities", style = "margin-bottom: 15px;"),
                              DT::dataTableOutput("activity_table") %>% withSpinner())
                     )
                   )
@@ -204,30 +204,30 @@ server <- function(input, output, session) {
     
     if (input$plot_type == "Scatterplot") {
       ggplot(df, aes(x = .data[[x]], y = .data[[y]])) +
-        geom_point(alpha = 0.6, color = "#4B9CD3") +
-        geom_smooth(method = "lm", se = TRUE, color = "#D34B87") +
+        geom_point(alpha = 0.6, color = "darkgreen") +
+        geom_smooth(method = "lm", se = TRUE, color = "darkblue") +
         labs(title = paste(y, "vs", x), x = x, y = y) + base_plot
       
     } else if (input$plot_type == "Histogram") {
       ggplot(df, aes(x = .data[[x]])) +
-        geom_histogram(bins = 30, fill = "#4B9CD3", color = "white") +
+        geom_histogram(bins = 30, fill = "darkred", color = "white") +
         labs(title = paste("Histogram of", x), x = x, y = y) + base_plot
       
     } else if (input$plot_type == "Boxplot") {
       ggplot(df, aes(y = .data[[y]])) +
-        geom_boxplot(fill = "#4B9CD3") +
+        geom_boxplot(fill = "orange") +
         labs(title = paste("Boxplot of", y), y = y) + base_plot
       
     } else if (input$plot_type == "Facet Scatterplot") {
       ggplot(df_long, aes(x = mins, y = mood)) +
         geom_point(alpha = 0.6) +
-        geom_smooth(method = "lm", se = TRUE, color = "#D34B87") +
+        geom_smooth(method = "lm", se = TRUE, color = "pink") +
         facet_wrap(~platform) +
-        labs(title = "Facet: Mood vs Minutes", x = "Minutes", y = "Mood") + base_plot
+        labs(title = paste("Facet", y, "vs", x), x = x, y = y) + base_plot
       
     } else if (input$plot_type == "Facet Histogram") {
       ggplot(df_long, aes(x = mins)) +
-        geom_histogram(bins = 20, fill = "#4B9CD3", color = "white") +
+        geom_histogram(bins = 20, fill = "darkred", color = "white") +
         facet_wrap(~platform) +
         labs(title = "Facet: Minutes Distribution by Platform", x = "Minutes", y = "Count") + base_plot
     }
