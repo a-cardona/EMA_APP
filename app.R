@@ -9,66 +9,62 @@ data_dir <- "/Users/andrewcardona/Desktop/CABLAB_CODE/EMA"
 file_paths <- list.files(data_dir, pattern = "^cleaned_EMA.*\\.csv$", full.names = TRUE)
 all_data <- file_paths %>% map_dfr(read_csv, .id = "file_index")
 
-# Ensure 'Record ID' column exists
-if (!"Record ID" %in% colnames(all_data)) {
-  stop("Error: 'Record ID' column not found in your data. Please ensure each CSV has 'Record ID' column.")
-}
-
+# Platforms and categories defining
 platforms <- c("insta", "x", "fb", "snapchat", "tiktok", "yt", "reddit", "tumblr", "pin", "wa", "wc")
 categories <- c("mood", "mins", "reason", "content", "activity")
 
 ui <- fluidPage(
   theme = bs_theme(bootswatch = "flatly", base_font = font_google("Lato")),
-  
-  titlePanel(div(style = "color:#2c3e50; font-size: 28px; font-weight: bold;", "EMA Explorer  /ᐠ – ˕ –マ  👍")),
-  
+  titlePanel(div(style = "color:#2c3e50; font-size: 28px; font-weight: bold;", "EMA Explorer  /ᴠ – ˕ –マ  👍")),
   sidebarLayout(
     sidebarPanel(
       h4("Control Center"),
-      checkboxGroupInput("selected_platforms", "Platforms:", choices = platforms, selected = platforms[1]),
-      checkboxGroupInput("selected_categories", "Categories:", choices = categories, selected = categories),
-      
+      radioButtons("cohort_filter", "Select Cohort:",
+                   choices = c("All", "Kids", "Teens", "Adults"),
+                   selected = "All"),
+      checkboxGroupInput("selected_platforms", "Platforms:",
+                         choices = c("All", platforms),
+                         selected = character(0)),  # NO initial selection
+      checkboxGroupInput("selected_categories", "Categories:",
+                         choices = categories,
+                         selected = character(0)),  # NO initial selection
       selectInput("x_var", "X-axis (numeric):", choices = NULL),
       selectInput("y_var", "Y-axis (numeric):", choices = NULL),
-      
-      selectInput("plot_type",
-                  "Plot Type:",
+      selectInput("plot_type", "Plot Type:",
                   choices = c("Scatterplot", "Histogram", "Boxplot", "Facet Scatterplot", "Facet Histogram")),
       hr(),
       actionButton("run_regression", "Run Regression", class = "btn btn-primary"),
       hr(),
-      
       h4("📄 Export Options"),
       uiOutput("column_selector"),
       downloadButton("download_selected", "⬇️ Download CSV"),
       hr()
     ),
-    
     mainPanel(
       tabsetPanel(type = "tabs", id = "tabs",
                   tabPanel("CSV Preview", DT::dataTableOutput("preview_selected")),
                   tabPanel("Plots", withSpinner(plotOutput("scatter_plot", height = "500px"))),
                   tabPanel("Regression", verbatimTextOutput("regression_output")),
-                  tabPanel(
-                    "Summary Tables",
-                    fluidRow(
-                      column(4, style = "padding-right: 20px;",
-                             h4("Reasons", style = "margin-bottom: 15px;"),
-                             DT::dataTableOutput("reason_table") %>% withSpinner()),
-                      column(4, style = "padding-left: 10px; padding-right: 10px;",
-                             h4("Content", style = "margin-bottom: 15px;"),
-                             DT::dataTableOutput("content_table") %>% withSpinner()),
-                      column(4, style = "padding-left: 20px;",
-                             h4("Activities", style = "margin-bottom: 15px;"),
-                             DT::dataTableOutput("activity_table") %>% withSpinner())
-                    )
+        
                   )
       )
     )
   )
-)
+
 
 server <- function(input, output, session) {
+  observeEvent(input$selected_platforms, {
+    selected <- input$selected_platforms
+    
+    if ("All" %in% selected && !all(platforms %in% selected)) {
+      updateCheckboxGroupInput(session, "selected_platforms", selected = c("All", platforms))
+    } else if (!("All" %in% selected) && all(platforms %in% selected)) {
+      updateCheckboxGroupInput(session, "selected_platforms", selected = c("All", platforms))
+    } else if ("All" %in% selected && !all(platforms %in% selected)) {
+      updateCheckboxGroupInput(session, "selected_platforms", selected = setdiff(selected, "All"))
+    }
+  }, ignoreInit = TRUE)
+  
   # Compute average mins and mood per Record ID
   recordid_avg_table <- reactive({
     mins_cols <- paste0(platforms, "_mins")
@@ -82,13 +78,94 @@ server <- function(input, output, session) {
       ungroup()
   })
   
+  participant_summary <- reactive({
+    df <- all_data %>%
+      mutate(PID = as.numeric(PID)) %>%
+      filter(!is.na(PID))
+    if (!"gen_mood" %in% names(df)) {
+      df$gen_mood <- NA_real_
+    }
+    
+    # Check existing mood and mins columns
+    mood_cols <- paste0(platforms, "_mood")
+    mins_cols <- paste0(platforms, "_mins")
+    mood_cols_exist <- mood_cols[mood_cols %in% names(df)]
+    mins_cols_exist <- mins_cols[mins_cols %in% names(df)]
+    
+    if (length(mood_cols_exist) == 0 || length(mins_cols_exist) == 0) {
+      df <- df %>%
+        mutate(
+          total_use = NA_real_,
+          weighted_mood = NA_real_
+        )
+    } else {
+      df <- df %>%
+        rowwise() %>%
+        mutate(
+          total_use = sum(c_across(all_of(mins_cols_exist)), na.rm = TRUE),
+          weighted_mood = {
+            moods <- c_across(all_of(mood_cols_exist))
+            mins <- c_across(all_of(mins_cols_exist))
+            total_mins <- sum(mins, na.rm = TRUE)
+            if (total_mins == 0) NA_real_ else sum(moods * mins, na.rm = TRUE) / total_mins
+          }
+        ) %>%
+        ungroup()
+    }
+    
+    neg_cols <- grep("_cont_(violence|bully|scary|sexual|substance)", names(df), value = TRUE)
+    if (length(neg_cols) > 0) {
+      df <- df %>%
+        rowwise() %>%
+        mutate(exposed_negative = as.integer(any(c_across(all_of(neg_cols)) == 1, na.rm = TRUE))) %>%
+        ungroup()
+    } else {
+      df <- df %>% mutate(exposed_negative = NA_integer_)
+    }
+    
+    corr_df <- df %>%
+      filter(!is.na(gen_mood), !is.na(total_use)) %>%
+      group_by(PID) %>%
+      summarise(
+        mood_use_corr = if (n() >= 2) cor(gen_mood, total_use, use = "complete.obs") else NA_real_,
+        .groups = "drop"
+      )
+    
+    summary_df <- df %>%
+      group_by(PID) %>%
+      summarise(
+        mood_during_use_score = mean(weighted_mood, na.rm = TRUE),
+        exposure_to_negative_score = mean(exposed_negative, na.rm = TRUE),
+        avg_total_duration = mean(total_use, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      left_join(corr_df, by = "PID") %>%
+      rename(mood_use_association_score = mood_use_corr)
+    
+    left_join(df, summary_df, by = "PID")
+  })
+  
   # Reactive that filters columns by platform + category and joins averages
   selected_df <- reactive({
     req(input$selected_platforms, input$selected_categories)
     
-    selected <- input$selected_platforms
+    selected <- setdiff(input$selected_platforms, "All")
+    if (length(selected) == 0) selected <- platforms  # fallback if nothing selected
+    
     selected_categories <- input$selected_categories
-    df <- all_data
+    df <- participant_summary()
+    
+    # Filter by cohort
+    df <- df %>%
+      mutate(PID = as.numeric(PID)) %>%
+      filter(
+        case_when(
+          input$cohort_filter == "Kids" ~ PID >= 1000 & PID < 2000,
+          input$cohort_filter == "Teens" ~ PID >= 2000 & PID < 3000,
+          input$cohort_filter == "Adults" ~ PID >= 3000 & PID < 4000,
+          TRUE ~ TRUE
+        )
+      )
     
     # Join averages
     avg_tbl <- recordid_avg_table()
@@ -123,10 +200,8 @@ server <- function(input, output, session) {
       activity = activity_cols
     )
     
-    # Selected columns filtered by categories
     selected_cols <- unlist(all_category_cols[selected_categories])
     
-    # Include avg columns for mood and mins if selected
     if ("mood" %in% selected_categories) {
       avg_mood_cols <- paste0(selected, "_avg_mood")
       selected_cols <- unique(c(selected_cols, avg_mood_cols))
@@ -136,8 +211,14 @@ server <- function(input, output, session) {
       selected_cols <- unique(c(selected_cols, avg_mins_cols))
     }
     
-    # Always include Record ID and gen_mood if available
-    common_cols <- intersect(c("Record ID", "gen_mood"), colnames(df))
+    # Always include Record ID, PID, gen_mood, and summary scores
+    summary_cols <- c("mood_during_use_score", "mood_use_association_score", "exposure_to_negative_score", "avg_total_duration")
+    common_cols <- intersect(c("Record ID", "PID", "gen_mood", summary_cols), colnames(df))
+    
+    # Put Record ID, PID, then summary cols first
+    order_cols <- c("Record ID", "PID", summary_cols, setdiff(common_cols, c("Record ID", "PID", summary_cols)))
+    common_cols <- intersect(order_cols, common_cols)
+    
     selected_cols <- unique(c(common_cols, selected_cols))
     
     list(
@@ -239,52 +320,6 @@ server <- function(input, output, session) {
     req(input$x_var, input$y_var)
     model <- lm(as.formula(paste(input$y_var, "~", input$x_var)), data = df)
     output$regression_output <- renderPrint({ summary(model) })
-  })
-  
-  # Summary tables for reasons, content, activity
-  output$reason_table <- DT::renderDataTable({
-    df <- selected_df()$df
-    cols <- selected_df()$reason_cols
-    if (length(cols) == 0) return(NULL)
-    dat <- df %>% select(all_of(cols)) %>% pivot_longer(everything()) %>%
-      filter(!is.na(value) & value != 0) %>% count(name, value) %>% head(20)
-    
-    datatable(dat, options = list(
-      pageLength = 10,
-      scrollY = "250px",
-      scrollCollapse = TRUE,
-      paging = TRUE
-    ))
-  })
-  
-  output$content_table <- DT::renderDataTable({
-    df <- selected_df()$df
-    cols <- selected_df()$content_cols
-    if (length(cols) == 0) return(NULL)
-    dat <- df %>% select(all_of(cols)) %>% pivot_longer(everything()) %>%
-      filter(!is.na(value) & value != 0) %>% count(name, value) %>% head(20)
-    
-    datatable(dat, options = list(
-      pageLength = 10,
-      scrollY = "250px",
-      scrollCollapse = TRUE,
-      paging = TRUE
-    ))
-  })
-  
-  output$activity_table <- DT::renderDataTable({
-    df <- selected_df()$df
-    cols <- selected_df()$activity_cols
-    if (length(cols) == 0) return(NULL)
-    dat <- df %>% select(all_of(cols)) %>% pivot_longer(everything()) %>%
-      filter(!is.na(value) & value != 0) %>% count(name, value) %>% head(20)
-    
-    datatable(dat, options = list(
-      pageLength = 10,
-      scrollY = "250px",
-      scrollCollapse = TRUE,
-      paging = TRUE
-    ))
   })
 }
 
