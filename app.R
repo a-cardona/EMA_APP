@@ -24,10 +24,10 @@ ui <- fluidPage(
                    selected = "All"),
       checkboxGroupInput("selected_platforms", "Platforms:",
                          choices = c("All", platforms),
-                         selected = character(0)),  # NO initial selection
+                         selected = character(0)),
       checkboxGroupInput("selected_categories", "Categories:",
                          choices = categories,
-                         selected = character(0)),  # NO initial selection
+                         selected = character(0)),
       selectInput("x_var", "X-axis (numeric):", choices = NULL),
       selectInput("y_var", "Y-axis (numeric):", choices = NULL),
       selectInput("plot_type", "Plot Type:",
@@ -44,13 +44,11 @@ ui <- fluidPage(
       tabsetPanel(type = "tabs", id = "tabs",
                   tabPanel("CSV Preview", DT::dataTableOutput("preview_selected")),
                   tabPanel("Plots", withSpinner(plotOutput("scatter_plot", height = "500px"))),
-                  tabPanel("Regression", verbatimTextOutput("regression_output")),
-        
-                  )
+                  tabPanel("Regression", verbatimTextOutput("regression_output"))
       )
     )
   )
-
+)
 
 server <- function(input, output, session) {
   observeEvent(input$selected_platforms, {
@@ -65,7 +63,6 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
   
-  # Compute average mins and mood per Record ID
   recordid_avg_table <- reactive({
     mins_cols <- paste0(platforms, "_mins")
     mood_cols <- paste0(platforms, "_mood")
@@ -82,11 +79,11 @@ server <- function(input, output, session) {
     df <- all_data %>%
       mutate(PID = as.numeric(PID)) %>%
       filter(!is.na(PID))
+    
     if (!"gen_mood" %in% names(df)) {
       df$gen_mood <- NA_real_
     }
     
-    # Check existing mood and mins columns
     mood_cols <- paste0(platforms, "_mood")
     mins_cols <- paste0(platforms, "_mins")
     mood_cols_exist <- mood_cols[mood_cols %in% names(df)]
@@ -114,10 +111,12 @@ server <- function(input, output, session) {
     }
     
     neg_cols <- grep("_cont_(violence|bully|scary|sexual|substance)", names(df), value = TRUE)
+    
+    # ✅ FIXED negative content computation
     if (length(neg_cols) > 0) {
       df <- df %>%
         rowwise() %>%
-        mutate(exposed_negative = as.integer(any(c_across(all_of(neg_cols)) == 1, na.rm = TRUE))) %>%
+        mutate(exposed_negative = as.integer(sum(c_across(all_of(neg_cols)) == 1, na.rm = TRUE) > 0)) %>%
         ungroup()
     } else {
       df <- df %>% mutate(exposed_negative = NA_integer_)
@@ -324,3 +323,4 @@ server <- function(input, output, session) {
 }
 
 shinyApp(ui = ui, server = server)
+#.  RUN THIS IN TERMINAL SO IT DOESNT CRASH>>>> Rscript -e "shiny::runApp('/Users/andrewcardona/Desktop/CABLAB_CODE/EMA/EMA_App', launch.browser = TRUE)"
