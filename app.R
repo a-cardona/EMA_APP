@@ -8,13 +8,26 @@ library(shinycssloaders)
 data_dir <- "/Users/andrewcardona/Desktop/CABLAB_CODE/EMA"
 file_paths <- list.files(data_dir, pattern = "^cleaned_EMA.*\\.csv$", full.names = TRUE)
 
+
 # Load all CSVs and combine
 all_data <- file_paths %>% map_dfr(read_csv, .id = "file_index")
 
-# Preprocess: convert PID numeric & filter invalid PIDs
+# Load participant-level scores
+final_scores_path <- file.path(data_dir, "final_participant_scores.csv")
+final_scores <- read_csv(final_scores_path, show_col_types = FALSE)
+
+# Preprocess: convert PID numeric & join scores
 processed_data <- all_data %>%
   mutate(PID = as.numeric(PID)) %>%
-  filter(!is.na(PID))
+  filter(!is.na(PID)) %>%
+  left_join(final_scores, by = "PID")
+# Load participant-level scores CSV (with PID and computed scores)
+participant_scores <- read_csv(file.path(data_dir, "final_participant_scores.csv")) %>%
+  mutate(PID = as.numeric(PID))
+
+# Join computed scores to processed_data by PID
+processed_data <- processed_data %>%
+  left_join(participant_scores, by = "PID")
 
 # Define platform and categories
 platforms <- c("insta", "x", "fb", "snapchat", "tiktok", "yt", "reddit", "tumblr", "pin", "wa", "wc")
@@ -65,16 +78,11 @@ server <- function(input, output, session) {
   # Helper: Handle "All" platforms checkbox logic efficiently
   observeEvent(input$selected_platforms, {
     selected <- input$selected_platforms
-    # If "All" is selected, select all platforms
     if ("All" %in% selected && length(selected) < length(platforms) + 1) {
       updateCheckboxGroupInput(session, "selected_platforms", selected = c("All", platforms))
-    }
-    # If "All" is deselected, keep only platforms
-    else if (!("All" %in% selected) && length(selected) == length(platforms)) {
+    } else if (!("All" %in% selected) && length(selected) == length(platforms)) {
       updateCheckboxGroupInput(session, "selected_platforms", selected = c("All", platforms))
-    }
-    # If "All" is selected but user deselects some platforms, remove "All"
-    else if ("All" %in% selected && length(selected) < length(platforms) + 1) {
+    } else if ("All" %in% selected && length(selected) < length(platforms) + 1) {
       updateCheckboxGroupInput(session, "selected_platforms", selected = setdiff(selected, "All"))
     }
   }, ignoreInit = TRUE)
@@ -98,17 +106,14 @@ server <- function(input, output, session) {
   selected_df <- reactive({
     req(input$selected_platforms, input$selected_categories)
     
-    # Handle "All" removed by helper above, so just platforms:
     selected_platforms <- setdiff(input$selected_platforms, "All")
     if (length(selected_platforms) == 0) {
-      # return minimal df with basic columns so app doesn’t break
       return(list(df = filtered_data() %>% select("Record ID", "PID", "gen_mood"), selected_cols = c("Record ID", "PID", "gen_mood")))
     }
     
     selected_categories <- input$selected_categories
     df <- filtered_data()
     
-    # Prepare column names per category
     mood_cols <- paste0(selected_platforms, "_mood")
     mins_cols <- paste0(selected_platforms, "_mins")
     
@@ -130,16 +135,13 @@ server <- function(input, output, session) {
     
     selected_cols <- unlist(all_category_cols[selected_categories])
     
-    # Add precomputed summary columns if they exist in df
-    summary_cols <- c("mood_during_use_score", "mood_use_association_score", "exposure_to_negative_score", "avg_total_duration")
+    summary_cols <- c("Mood_During_Use_Score", "Mood_Use_Association_Score", "Exposure_Negative_Score", "Avg_Total_Duration")
     summary_cols <- intersect(summary_cols, colnames(df))
     
-    # Always keep these basics
     base_cols <- intersect(c("Record ID", "PID", "gen_mood", "Mood_During_Use_Score", "Mood_Use_Association_Score", "Exposure_Negative_Score", "Avg_Total_Duration"), colnames(df))
     
     selected_cols <- unique(c(base_cols, summary_cols, selected_cols))
     
-    # Return list for UI and outputs
     list(
       df = df,
       selected_cols = selected_cols
@@ -161,14 +163,32 @@ server <- function(input, output, session) {
                        selected = selected_df()$selected_cols)
   })
   
-  # --- Download handler ---
+  # --- Download handler for wide-format CSV by PID ---
   output$download_selected <- downloadHandler(
-    filename = function() paste("selected_columns", Sys.Date(), ".csv", sep = ""),
+    filename = function() paste("selected_columns_wide", Sys.Date(), ".csv", sep = ""),
     content = function(file) {
       df <- selected_df()$df
       selected_cols <- input$selected_columns
+      
       if (!is.null(selected_cols) && all(selected_cols %in% names(df))) {
-        export_df <- df %>% select(all_of(selected_cols)) %>% mutate(across(everything(), as.character))
+        # Subset to PID and selected columns
+        df_subset <- df %>% select(all_of(c("PID", selected_cols)))
+        
+        # Create index of EMA entries per PID
+        df_wide <- df_subset %>%
+          group_by(PID) %>%
+          mutate(entry_num = row_number()) %>%
+          ungroup() %>%
+          pivot_wider(
+            id_cols = PID,
+            names_from = entry_num,
+            values_from = setdiff(names(df_subset), "PID"),
+            names_sep = "_EMA"
+          )
+        
+        # Convert all columns to character (safe for export)
+        export_df <- df_wide %>% mutate(across(everything(), as.character))
+        
         write_csv(export_df, file, na = "")
       } else {
         write_csv(tibble(Note = "No valid columns selected or columns not found."), file)
@@ -189,7 +209,6 @@ server <- function(input, output, session) {
     x <- input$x_var
     y <- input$y_var
     
-    # Prepare long format for facet plots if needed
     df_long <- df %>%
       pivot_longer(cols = matches("_mood$|_mins$"), names_to = "var", values_to = "value") %>%
       separate(var, into = c("platform", "measure"), sep = "_", extra = "merge") %>%
@@ -239,7 +258,3 @@ server <- function(input, output, session) {
 }
 
 shinyApp(ui = ui, server = server)
-
-
-# RUN THIS IN TERMINAL SO IT DOESNT CRASH >>> Rscript -e "shiny::runApp('/Users/andrewcardona/Desktop/CABLAB_CODE/EMA/EMA_App', launch.browser = TRUE)"
-
