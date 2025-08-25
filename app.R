@@ -1,3 +1,8 @@
+
+# in order for this script to work you must first run through ema_cleaner script and then you can run this script. 
+# you should be able to just run it wihtin Rstudio and it should appear in your viewer window! 
+
+
 library(shiny)
 library(tidyverse)
 library(DT)
